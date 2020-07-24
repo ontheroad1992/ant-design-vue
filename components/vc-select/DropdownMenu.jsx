@@ -6,9 +6,11 @@ import { getSelectKeys, preventDefaultEvent } from './util';
 import { cloneElement } from '../_util/vnode';
 import BaseMixin from '../_util/BaseMixin';
 import { getSlotOptions, getComponentFromProp, getListeners } from '../_util/props-util';
+import KeyCode from '../_util/KeyCode';
 
 // 默认偏移值
-let defaultOffset = 10;
+let defaultMenuOffset = 12;
+let oldPosition = 0;
 
 export default {
   name: 'DropdownMenu',
@@ -32,10 +34,10 @@ export default {
     menuItemSelectedIcon: PropTypes.any,
   },
   data: () => ({
-    menuItemStart: 0,
-    menuItemOffset: defaultOffset,
-    itemSize: 32,
-    maxHeight: 250,
+    menuStart: 0,
+    menuOffset: defaultMenuOffset,
+    menuOptionHeight: 32,
+    wrapperMaxHeight: 264,
   }),
   watch: {
     visible(val) {
@@ -45,6 +47,12 @@ export default {
         this.$nextTick(() => {
           this.scrollActiveItemToView();
         });
+      }
+    },
+    inputValue(val) {
+      if (val) {
+        const menuContainer = this.$refs.menuContainer;
+        if (menuContainer) menuContainer.scrollTop = 0;
       }
     },
   },
@@ -63,8 +71,9 @@ export default {
 
     // Calculate the offset value during virtual scrolling
     const { maxHeight } = this.dropdownMenuStyle;
-    defaultOffset = Math.ceil(parseInt(maxHeight || this.maxHeight) / this.itemSize) + 2;
-    this.menuItemOffset = defaultOffset;
+    this.wrapperMaxHeight = parseInt(maxHeight) || this.wrapperMaxHeight;
+    this.menuOffset = defaultMenuOffset =
+      Math.ceil(parseInt(this.wrapperMaxHeight) / this.menuOptionHeight) + 4;
   },
   updated() {
     const props = this.$props;
@@ -73,6 +82,16 @@ export default {
     //     this.scrollActiveItemToView();
     //   });
     // }
+    // Roughly calculate the height of ‘select-option’
+    this.$nextTick(() => {
+      const menuRef = this.$refs.menuRef;
+      if (menuRef && menuRef.$el) {
+        const option = menuRef.$el.querySelector("li[role='option']");
+        if (option) {
+          this.menuOptionHeight = option.clientHeight;
+        }
+      }
+    });
     this.lastVisible = props.visible;
     this.lastInputValue = props.inputValue;
     this.prevVisible = this.visible;
@@ -134,8 +153,8 @@ export default {
             ...dropdownMenuStyle,
             // Movement control for virtual scrolling
             overflowY: 'hidden',
-            transform: `translateY(${this.menuItemStart * this.itemSize}px)`,
-            maxHeight: this.menuItemOffset * this.itemSize + 'px',
+            // transform: `translateY(${this.menuStart * this.menuOptionHeight}px)`,
+            maxHeight: this.menuOffset * this.menuOptionHeight + 'px',
           },
           ref: 'menuRef',
           attrs: {
@@ -203,10 +222,7 @@ export default {
         }
 
         // Control the displayed data
-        clonedMenuItems = clonedMenuItems.slice(
-          this.menuItemStart,
-          this.menuItemStart + this.menuItemOffset,
-        );
+        clonedMenuItems = clonedMenuItems.slice(this.menuStart, this.menuStart + this.menuOffset);
 
         // clear activeKey when inputValue change
         const lastValue = value && value[value.length - 1];
@@ -223,33 +239,72 @@ export default {
       return null;
     },
     onVirtualScroller(event) {
+      console.log('XXX');
       // 现在的位置
       const newPositionY = event.target.scrollTop;
-      // 根据滚轴的距离来计算截取数据的起点，由于 wrapper 向上偏移了 1 位， 相应的将起始位置也偏移
-      let start = Math.floor(newPositionY / this.itemSize);
-      // 控制 wrapper 的偏移，防止出现空白
-      if (start >= 1) {
-        this.menuItemOffset = defaultOffset + 1;
-        start -= 1;
-      } else {
-        this.menuItemOffset = defaultOffset;
+
+      if (Math.abs(oldPosition - newPositionY) > this.menuOptionHeight) {
+        // 根据滚轴的距离来计算截取数据的起点，由于 wrapper 向上偏移了 1 位， 相应的将起始位置也偏移
+        let start = Math.floor(newPositionY / this.menuOptionHeight);
+        // 控制 wrapper 的偏移，防止出现空白
+        if (start > 0) {
+          this.menuOffset = defaultMenuOffset + 1;
+          start -= 1;
+        } else {
+          this.menuOffset = defaultMenuOffset;
+          // start = 0;
+        }
+        this.menuStart = start;
+
+        oldPosition = newPositionY;
+
+        const menuRef = this.$refs.menuRef;
+        menuRef.$el.style.transform = `translateY(${newPositionY - this.menuOptionHeight * 2}px)`;
       }
-      this.menuItemStart = start;
+
       const { popupScroll } = getListeners(this);
       popupScroll(event);
+    },
+    onKeyDown(event, item) {
+      const keyCode = event.keyCode;
+
+      const menuContainer = this.$refs.menuContainer;
+
+      let scrollTop = menuContainer.scrollTop;
+
+      let itemOffsetTop = item.$el.offsetParent.offsetParent;
+      console.log('itemOffsetTop', itemOffsetTop);
+      // // 去掉偏移的部分
+      // if (this.menuStart === 0) {
+      //   itemOffsetTop += this.menuOptionHeight;
+      // }
+      // console.log(itemOffsetTop, scrollTop);
+
+      // if (keyCode === KeyCode.DOWN) {
+      //   if (itemOffsetTop >= this.wrapperMaxHeight) {
+      //     scrollTop += this.menuOptionHeight;
+      //   }
+      // }
+
+      // if (keyCode === KeyCode.UP) {
+      //   if (itemOffsetTop <= this.menuOptionHeight) {
+      //     scrollTop -= this.menuOptionHeight;
+      //   }
+      // }
+
+      // menuContainer.scrollTop = scrollTop;
     },
   },
   render() {
     const renderMenu = this.renderMenu();
     const { popupFocus } = getListeners(this);
-    const { maxHeight = this.maxHeight + 'px' } = this.dropdownMenuStyle;
 
     return renderMenu ? (
       <div
         style={{
           overflow: 'auto',
           transform: 'translateZ(0)',
-          maxHeight,
+          maxHeight: this.wrapperMaxHeight + 'px',
         }}
         id={this.$props.ariaId}
         tabIndex="-1"
@@ -260,7 +315,7 @@ export default {
       >
         <div
           style={{
-            minHeight: this.menuItems.length * this.itemSize + 'px',
+            minHeight: this.menuItems.length * this.menuOptionHeight + 'px',
           }}
         >
           {renderMenu}
